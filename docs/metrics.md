@@ -27,7 +27,7 @@ normale prise au hasard. Classifieur parfait: 1.0. Tirage a pile ou face: 0.5.
 
 ## Comment l'expliquer au business
 
-- Version une phrase: "Sur 100 duos (une piece bonne, une piece defectueuse), le modele
+- Version simple: "Sur 100 duos (une piece bonne, une piece defectueuse), le modele
   met la defectueuse en haut de la pile 99 fois sur 100."
 - Ce que ce n'est pas: un taux de detection a un seuil donne. L'AUROC dit que le modele
   RANGE bien; la mise en production exige ensuite de fixer le seuil d'alarme, et la on
