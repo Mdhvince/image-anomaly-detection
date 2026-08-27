@@ -1,9 +1,3 @@
-"""Data layer: offline MVTec-AD indexing into a flat CSV, dataset and loaders.
-
-The CSV is the single contract between the dataset folder layout and the rest of the
-code - one row per image:
-category,split,label,image_path,mask_path (schema detailed in README.md).
-"""
 from collections.abc import Callable
 from pathlib import Path
 

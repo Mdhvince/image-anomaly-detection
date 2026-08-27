@@ -1,7 +1,4 @@
-"""Display helpers: dataset preview, preprocessing check, loss curve, anomaly maps.
-
-Pure matplotlib functions - return the figure, the caller decides to show or save it.
-"""
+"""Display helpers: dataset preview, preprocessing check, loss curve, anomaly maps."""
 from collections.abc import Callable
 
 import matplotlib.pyplot as plt

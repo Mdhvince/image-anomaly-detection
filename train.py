@@ -1,13 +1,3 @@
-"""Train Dinomaly on every MVTec-AD category: one model per category.
-
-Checkpoint contract: checkpoints/<category>.pt is (re)saved whenever the
-validation loss decreases - never at the end of training; it holds the
-bottleneck and decoder state_dicts only (the encoder is frozen DINOv2).
-
-Run:
-    python train.py
-    DINOMALITY_CONFIG=my_run.ini python train.py
-"""
 import math
 from pathlib import Path
 

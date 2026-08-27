@@ -1,4 +1,3 @@
-"""Configuration loading: config.ini holds the paper values, [demo] the lighter regimen."""
 import configparser
 import os
 from pathlib import Path

@@ -1,7 +1,4 @@
-"""Dinomaly architecture: frozen DINOv2 encoder, noisy bottleneck, linear-attention decoder.
-
-Assembled by build_model. The model class is called ViTill in the official code.
-"""
+"""Dinomaly architecture: frozen DINOv2 encoder, noisy bottleneck, linear-attention decoder."""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

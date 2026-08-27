@@ -1,9 +1,3 @@
-"""Inference: anomaly maps, image scores, image-level AUROC.
-
-Run (after train.py saved a checkpoint for the category):
-    python inference.py
-    DINOMALITY_CONFIG=my_run.ini python inference.py
-"""
 from pathlib import Path
 
 import torch
