@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 
 from config import checkpoint_path, get_device, load_config
 from dataset import build_dataloaders, index_mvtec, list_categories
@@ -12,7 +13,7 @@ from model import build_model
 from preprocess import apply_preprocessing
 
 
-def train_dinomaly(model: torch.nn.Module, train_loader: torch.utils.data.DataLoader, valid_loader: torch.utils.data.DataLoader, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, config: dict, save_path: Path) -> list:
+def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: DataLoader, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, config: dict, save_path: Path) -> list:
     """Epoch loop: train on normal images, validate on held-out normals, save on validation improvement.
 
     The mining rate ramps up linearly from 0 to final_mining_percent over
