@@ -11,12 +11,12 @@ import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = PROJECT_ROOT.parent / "datasets" / "mvtec_anomaly_detection"
-INDEX_CSV = DATA_ROOT / "index.csv"
+DATA_CSV = DATA_ROOT / "data.csv"
 
 CONFIG = {
     # data
     "data_root": DATA_ROOT,
-    "index_csv": INDEX_CSV,
+    "data_csv": DATA_CSV,
     # model
     "backbone": "dinov2_vitb14_reg",
     "target_layers": [2, 3, 4, 5, 6, 7, 8, 9],  # 8 middle layers out of 12

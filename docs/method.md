@@ -10,8 +10,8 @@ L'entrainement ne voit que des images **normales**: c'est le "unsupervised" de l
 detection d'anomalies. Le jeu de test melange images normales et anormales, avec un
 masque de verite terrain pour les anormales.
 
-Le contrat entre les modules n'est pas une arborescence mais un **CSV d'index**,
-`data_root/index.csv` produit par `src/dataset_utils.py::index_mvtec` - une ligne par image:
+Le contrat entre les modules n'est pas une arborescence mais un **CSV plat**,
+`data_root/data.csv` produit par `src/dataset_utils.py::build_data` - une ligne par image:
 
     category,split,label,image_path,mask_path
 
@@ -22,7 +22,7 @@ Le contrat entre les modules n'est pas une arborescence mais un **CSV d'index**,
 4. `mask_path`: chemin **absolu** du masque pixel-level (vide pour les normales).
 
 La seule cellule qui connait l'arborescence officielle (`train/good`, `test/<defaut>`,
-`ground_truth/<defaut>/<nom>_mask.png`) est l'indexeur. Pour brancher un autre
+`ground_truth/<defaut>/<nom>_mask.png`) est `generate_dataframe_from_images`. Pour brancher un autre
 dataset: produire un CSV dans ce format, rien d'autre ne change.
 
 La configuration est un dictionnaire Python brut (`src/config.py::CONFIG`, surcouche

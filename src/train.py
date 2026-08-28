@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -9,11 +10,12 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
 
 from config import PROJECT_ROOT, checkpoint_path, get_config, get_device
-from dataset_utils import build_dataloaders, index_mvtec
+from dataset_utils import generate_dataframe_from_images, train_valid_split
 from inference import compute_normal_threshold
 from loss import build_optimizer, global_cosine_hm
 from model import build_model
 from preprocess import apply_preprocessing, denormalize
+from src.custom_dataset import CustomDataset
 
 
 def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: DataLoader, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, config: dict, save_path: Path) -> None:
@@ -48,16 +50,16 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
             iteration += 1
             if iteration == 1:
                 writer.add_image("training/first_batch", make_grid(denormalize(images.cpu()), nrow=4), iteration)
+
             mining_percent = min(                                   # hard mining rate: 0 -> final_mining_percent
                 config["final_mining_percent"] * iteration / config["mining_ramp_iterations"],
                 config["final_mining_percent"],
             )
-            optimizer.zero_grad()                                   # Clear the gradients, they accumulate at each step
-            encoder_groups, decoder_groups = model(images)          # Forward through the frozen encoder
-            loss = global_cosine_hm(                                # Compute the loss (+ register the mining hooks)
-                encoder_groups, decoder_groups, mining_percent, config["shrink_factor"]
-            )
-            loss.backward()                                         # Compute the gradients (easy points: grad x0.1)
+
+            optimizer.zero_grad()
+            encoder_groups, decoder_groups = model(images)
+            loss = global_cosine_hm(encoder_groups, decoder_groups, mining_percent, config["shrink_factor"])
+            loss.backward()
             nn.utils.clip_grad_norm_(                               # Clip the gradients (paper: max_norm 0.1)
                 [
                     parameter
@@ -66,7 +68,7 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
                 ],
                 max_norm=config["max_grad_norm"],
             )
-            optimizer.step()                                        # Perform updates using calculated gradients
+            optimizer.step()
             scheduler.step()
             train_loss += loss.item() * images.size(0)
         train_loss = train_loss / len(train_loader.sampler)
@@ -78,8 +80,8 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
                 encoder_groups, decoder_groups = model(images)
                 loss = global_cosine_hm(encoder_groups, decoder_groups, 0.0, config["shrink_factor"])
                 valid_loss += loss.item() * images.size(0)
-        valid_loss = valid_loss / len(valid_loader.sampler)
 
+        valid_loss = valid_loss / len(valid_loader.sampler)
         writer.add_scalars("Loss", {"training": train_loss, "validation": valid_loss}, epoch)  # one plot, two curves
         print(f"Epoch: {epoch} \tTraining Loss: {train_loss:.4f} \tValidation Loss: {valid_loss:.4f}")
 
@@ -95,45 +97,33 @@ def main() -> None:
     """Index the dataset, train one model on all categories, checkpoint on validation improvement."""
     config = get_config()
     device = get_device()
-
-    torch.manual_seed(17)                                          # fixed seeds: same validation split at every run
+    torch.manual_seed(17)
     np.random.seed(17)
 
-    index_csv = config["index_csv"]
-    num_indexed_images = index_mvtec(config["data_root"], index_csv)
-    print(f"index.csv: {num_indexed_images} images -> {index_csv}")
+    bs, ims, cs = config["batch_size"], config["img_size"], config["crop_size"]
+    val_ratio = config["valid_ratio"]
+    num_workers = config["num_workers"]
 
-    train_loader, valid_loader, _, _ = build_dataloaders(
-        index_csv, config["img_size"], config["crop_size"],
-        config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
-    )
-    print(
-        f"{len(train_loader.sampler)} train images (normal only, all categories), "
-        f"{len(valid_loader.sampler)} held out for validation"
-    )
+    data: pd.DataFrame = generate_dataframe_from_images(config["data_root"])
+    train_data = data[data["split"] == "train"]
+    train_set = CustomDataset(train_data, ims, cs, apply_preprocessing)
+    train_sampler, valid_sampler = train_valid_split(train_set, val_ratio)
+    train_loader = DataLoader(train_set, batch_size=bs, sampler=train_sampler, num_workers=num_workers, drop_last=True)
+    valid_loader = DataLoader(train_set, batch_size=bs, sampler=valid_sampler, num_workers=num_workers)
 
     model = build_model(config, device)
-    num_frozen_parameters = sum(parameter.numel() for parameter in model.encoder.parameters())
-    num_trainable_parameters = sum(
-        parameter.numel() for module in (model.bottleneck, model.decoder) for parameter in module.parameters()
-    )
-    print(
-        f"{config['backbone']} frozen ({num_frozen_parameters / 1e6:.0f}M parameters), "
-        f"{num_trainable_parameters / 1e6:.1f}M trainable"
-    )
-
     optimizer, scheduler = build_optimizer(model, config)
+
     save_path = checkpoint_path()
     train_dinomaly(model, train_loader, valid_loader, optimizer, scheduler, config, save_path)
 
-    checkpoint = torch.load(save_path)                             # evaluate the best-validation weights, not the last epoch
+    checkpoint = torch.load(save_path)
     model.bottleneck.load_state_dict(checkpoint["bottleneck"])
     model.decoder.load_state_dict(checkpoint["decoder"])
     threshold = compute_normal_threshold(model, valid_loader, config["top_pixel_ratio"])
     checkpoint["threshold"] = threshold
     torch.save(checkpoint, save_path)
     print(f"Decision threshold (max validation score): {threshold:.4f}")
-    print("Losses and first batch in TensorBoard: tensorboard --logdir runs")
 
 
 if __name__ == "__main__":

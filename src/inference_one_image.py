@@ -1,10 +1,3 @@
-"""Real-condition inference: score ONE image file with the trained multi-class model.
-
-Prints the image-level anomaly score, the binary decision when the checkpoint
-carries a threshold, and displays a side-by-side figure (image | anomaly map overlay).
-
-Run: python inference_one_image.py path/to/image.png
-"""
 import sys
 from pathlib import Path
 

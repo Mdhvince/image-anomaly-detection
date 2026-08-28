@@ -1,4 +1,4 @@
-"""Dataset over slices of the flat index CSV - the CSV already carries full paths."""
+"""Dataset over slices of the flat data CSV - the CSV already carries full paths."""
 from collections.abc import Callable
 
 import pandas as pd
@@ -7,12 +7,12 @@ from PIL import Image
 
 
 class CustomDataset(torch.utils.data.Dataset):
-    """One row of index.csv per sample; this class only loads fields, never assembles paths.
+    """One row of data.csv per sample; this class only loads fields, never assembles paths.
 
-    Expected DataFrame columns (produced by dataset_utils.index_mvtec):
+    Expected DataFrame columns (produced by dataset_utils.build_data):
     category, split, label, image_path (absolute), mask_path (absolute, "" when none).
 
-    :param data: DataFrame slice of the index (ex: all train rows, or one category's test rows).
+    :param data: DataFrame slice of the data CSV (ex: all train rows, or one category's test rows).
     :param img_size: preprocessing resize size.
     :param crop_size: preprocessing crop size.
     :param preprocess: image pipeline (ex: preprocess.apply_preprocessing).

@@ -152,4 +152,5 @@ def build_model(config: dict, device: torch.device) -> Dinomaly:
     model = Dinomaly(encoder, bottleneck, decoder, config["groups"]).to(device)
     model.bottleneck.apply(init_weights)
     model.decoder.apply(init_weights)
+    print(model)
     return model

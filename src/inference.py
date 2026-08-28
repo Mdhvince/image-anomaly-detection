@@ -1,10 +1,12 @@
+import pandas as pd
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from sklearn.metrics import roc_auc_score
 
 from config import checkpoint_path, get_config, get_device
 from custom_dataset import CustomDataset
-from dataset_utils import build_dataloaders, index_mvtec, list_categories, read_index
+from dataset_utils import generate_dataframe_from_images
 from model import build_model
 from preprocess import apply_preprocessing
 
@@ -80,11 +82,10 @@ def main() -> None:
     """Load the multi-class checkpoint once; per category: image-level AUROC + detected anomalies at the learned threshold."""
     config = get_config()
     device = get_device()
+    torch.manual_seed(17)
 
-    index_csv = config["index_csv"]
-    index_mvtec(config["data_root"], index_csv)
-
-    torch.manual_seed(17)                                          # same train/validation split as train.py
+    data: pd.DataFrame = generate_dataframe_from_images(config["data_root"])
+    test_data = data[(data["split"] == "test")]
 
     model = build_model(config, device)
     checkpoint = torch.load(checkpoint_path())
@@ -92,32 +93,27 @@ def main() -> None:
     model.decoder.load_state_dict(checkpoint["decoder"])
 
     threshold = checkpoint.get("threshold")
-    if threshold is None:                                          # checkpoint saved before thresholds existed
-        _, valid_loader, _, _ = build_dataloaders(
-            index_csv, config["img_size"], config["crop_size"],
-            config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
-        )
-        threshold = compute_normal_threshold(model, valid_loader, config["top_pixel_ratio"])
-        print(f"Threshold computed from validation split: {threshold:.4f}")
+    if threshold is None:
+        raise ValueError("No threshold found in the checkpoint; please re-run train.py to save it.")
 
-    aurocs = []
-    index_frame = read_index(index_csv)
-    categories = list_categories(index_csv)
+    results = []
+    categories = sorted(test_data.category.unique())
+    bs, ims, cs = config["batch_size"], config["img_size"], config["crop_size"]
+
     for category_name in categories:
-        test_set = CustomDataset(
-            index_frame[(index_frame["split"] == "test") & (index_frame["category"] == category_name)],
-            config["img_size"], config["crop_size"], apply_preprocessing,
-        )
-        test_loader = torch.utils.data.DataLoader(test_set, batch_size=config["batch_size"], shuffle=False)
+        test_set = CustomDataset(test_data[test_data["category"] == category_name], ims, cs, apply_preprocessing)
+        test_loader = DataLoader(test_set, batch_size=bs, shuffle=False)
         auroc, scores, labels = evaluate_image_auroc(model, test_loader, config["top_pixel_ratio"])
-        aurocs.append(auroc)
-        num_anomalies = int(sum(labels))
-        num_detected = sum(1 for score, label in zip(scores, labels) if label == 1 and score >= threshold)
-        print(
-            f"{category_name}: image-level AUROC {auroc:.3f} ({num_anomalies} anomalies / {len(labels)} images), "
-            f"detected {num_detected}/{num_anomalies} at threshold {threshold:.4f}"
-        )
-    print(f"Mean image-level AUROC over {len(categories)} categories: {sum(aurocs) / len(aurocs):.3f}")
+
+        results.append({
+            "Category": category_name,
+            "Num Anomalies": int(sum(labels)),
+            "Num Detected": sum(1 for score, label in zip(scores, labels) if label == 1 and score >= threshold),
+            "AUROC": auroc,
+            "Threshold": threshold,
+        })
+
+    print(pd.DataFrame(results).to_string(index=False))
 
 
 if __name__ == "__main__":
