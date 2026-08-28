@@ -125,7 +125,10 @@ Boucle par epochs (`train.py::train_dinomaly`): phase train sur les images norma
 puis phase validation sur un split d'images normales mis de cote (`valid_ratio`, sans
 backward). Le checkpoint est **re-sauvegarde a chaque fois que la loss de validation
 diminue** - jamais en fin d'entrainement. Seuls les poids du bottleneck et du decoder
-sont sauvegardes dans `checkpoints/dinomaly.pt`.
+sont sauvegardes dans `checkpoints/dinomaly.pt`. A la fin de l'entrainement, les
+poids de la meilleure validation sont recharges et un **seuil de decision** est calcule
+(= score maximum parmi les images normales tenues a l'ecart), puis stocke dans le
+checkpoint sous la cle `"threshold"`.
 
 Suivi dans **TensorBoard**: losses train/validation par epoch (scalars) et la grille
 du **1er batch d'entrainement** (denormalise, pour verifier le preprocessing):
@@ -140,7 +143,13 @@ Le **score image** = moyenne du top 1% des valeurs de la carte (plus robuste que
 Une seule passe forward donne les trois taches: segmentation (la carte), detection
 (score vs seuil), classification (anormal ou non). Evaluation (`inference.py`): le
 checkpoint unique est recharge une fois, puis l'I-AUROC est calculee **par categorie**
-+ en **moyenne** sur toutes (le protocole multi-class du papier).
++ en **moyenne** sur toutes (le protocole multi-class du papier), avec le **compte
+d'anomalies detectees** au seuil calcule. Un checkpoint ancien (sans seuil) le fait
+recalculer automatiquement depuis le split de validation.
+
+Inference en condition reelle sur une image seule (n'importe quel fichier):
+`python inference_one_image.py <chemin>` -> score image + **decision normale/ANOMALIE**
++ fenetre matplotlib (image | carte superposee).
 
 ## Recapitulatif
 
@@ -154,5 +163,5 @@ checkpoint unique est recharge une fois, puis l'I-AUROC est calculee **par categ
 | Training | un modele unique, toutes categories (multi-class) | idem |
 | Score image | moyenne du top 1% de la carte | idem |
 
-Regimen DEMO assume: 224px (au lieu de 392), 300 iterations (au lieu de 10 000),
+Regimen DEMO assume: 224px (au lieu de 392), 1500 iterations (au lieu de 10 000),
 batch 4 (au lieu de 16), AdamW+AMSGrad (au lieu de StableAdamW).

@@ -10,6 +10,7 @@ from torchvision.utils import make_grid
 
 from config import checkpoint_path, get_device, load_config
 from dataset import build_dataloaders, index_mvtec
+from inference import compute_normal_threshold
 from loss import build_optimizer, global_cosine_hm
 from model import build_model
 from preprocess import apply_preprocessing, denormalize
@@ -79,8 +80,7 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
                 valid_loss += loss.item() * images.size(0)
         valid_loss = valid_loss / len(valid_loader.sampler)
 
-        writer.add_scalar("Loss/training", train_loss, epoch)
-        writer.add_scalar("Loss/validation", valid_loss, epoch)
+        writer.add_scalars("Loss", {"training": train_loss, "validation": valid_loss}, epoch)  # one plot, two curves
         print(f"Epoch: {epoch} \tTraining Loss: {train_loss:.4f} \tValidation Loss: {valid_loss:.4f}")
 
         if valid_loss <= valid_loss_min:
@@ -124,7 +124,16 @@ def main() -> None:
     )
 
     optimizer, scheduler = build_optimizer(model, config)
-    train_dinomaly(model, train_loader, valid_loader, optimizer, scheduler, config, checkpoint_path())
+    save_path = checkpoint_path()
+    train_dinomaly(model, train_loader, valid_loader, optimizer, scheduler, config, save_path)
+
+    checkpoint = torch.load(save_path)                             # evaluate the best-validation weights, not the last epoch
+    model.bottleneck.load_state_dict(checkpoint["bottleneck"])
+    model.decoder.load_state_dict(checkpoint["decoder"])
+    threshold = compute_normal_threshold(model, valid_loader, config["top_pixel_ratio"])
+    checkpoint["threshold"] = threshold
+    torch.save(checkpoint, save_path)
+    print(f"Decision threshold (max validation score): {threshold:.4f}")
     print("Losses and first batch in TensorBoard: tensorboard --logdir runs")
 
 

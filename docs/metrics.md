@@ -37,3 +37,17 @@ normale prise au hasard. Classifieur parfait: 1.0. Tirage a pile ou face: 0.5.
 - Garde-fou a annoncer: 0.996 veut dire 4 duos mal ordonnes sur 1000. La question a poser
   au metier: combien de defauts rates par lot est tolerable, et a quel cout de fausses
   alarmes correspond ce seuil?
+
+## Le seuil du projet: passer du score a la decision
+
+Pour compter les detections ("detectees X/Y"), il faut un seuil - l'AUROC seule ne le
+fournit pas. Choix minimal implemente ici: le seuil est **calcule** automatiquement a la fin
+de l'entrainement = **score maximum des images normales tenues a l'ecart**
+(validation), stocke dans le checkpoint. C'est un seuil **global** (toutes categories):
+le papier ne fixe aucun seuil de decision (ses metriques balayent tous les seuils), et
+l'option par-categorie n'est justifiee que si les maxima de validation divergent
+fortement entre categories. C'est le point de fonctionnement le plus conservateur: zero
+fausse alarme sur la validation. `inference.py` en deduit le rappel par categorie
+(anomalies detectees / total), `inference_one_image.py` la decision normale/anormale.
+Pour un pilotage plus fin (equilibrer defauts rates et fausses alarmes), le F1-max
+(ci-dessus) est la brique a ajouter ensuite.

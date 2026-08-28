@@ -42,26 +42,43 @@ def image_scores(anomaly_maps: torch.Tensor, top_pixel_ratio: float = 0.01) -> t
     return flat_maps.sort(dim=1, descending=True)[0][:, :num_top_values].mean(dim=1)
 
 
-def evaluate_image_auroc(model: torch.nn.Module, test_loader: torch.utils.data.DataLoader, top_pixel_ratio: float) -> float:
-    """Image-level AUROC over the whole test loader (model set to eval mode).
+def evaluate_image_auroc(model: torch.nn.Module, test_loader: torch.utils.data.DataLoader, top_pixel_ratio: float) -> tuple:
+    """Image-level AUROC + per-image scores and labels over the whole test loader (model set to eval mode).
 
     :param model: trained Dinomaly model.
     :param test_loader: ordered evaluation DataLoader.
     :param top_pixel_ratio: passed to image_scores.
-    :return: I-AUROC between 0 and 1.
+    :return: (I-AUROC between 0 and 1, one score per image, ground-truth labels).
     """
     model.eval()
     device = next(model.parameters()).device
-    score_batches, label_batches = [], []
-    for images, _, labels in test_loader:
+    scores, labels = [], []
+    for images, _, batch_labels in test_loader:
         anomaly_maps = compute_anomaly_maps(model, images.to(device), images.shape[-1])
-        score_batches.append(image_scores(anomaly_maps, top_pixel_ratio).cpu())
-        label_batches.append(labels)
-    return roc_auc_score(torch.cat(label_batches).numpy(), torch.cat(score_batches).numpy())
+        scores.extend(image_scores(anomaly_maps, top_pixel_ratio).tolist())
+        labels.extend(batch_labels.tolist())
+    return roc_auc_score(labels, scores), scores, labels
+
+
+def compute_normal_threshold(model: torch.nn.Module, valid_loader: torch.utils.data.DataLoader, top_pixel_ratio: float) -> float:
+    """Decision threshold = max image score over held-out NORMAL validation images.
+
+    :param model: Dinomaly model in eval mode.
+    :param valid_loader: held-out normal images.
+    :param top_pixel_ratio: passed to image_scores.
+    :return: threshold; an image scoring above it is declared anomalous.
+    """
+    model.eval()
+    device = next(model.parameters()).device
+    scores = []
+    for images, _, _ in valid_loader:
+        anomaly_maps = compute_anomaly_maps(model, images.to(device), images.shape[-1])
+        scores.extend(image_scores(anomaly_maps, top_pixel_ratio).tolist())
+    return max(scores)
 
 
 def main() -> None:
-    """For every category: rebuild the model, load its checkpoint, print the image-level AUROC (mean at the end)."""
+    """Load the multi-class checkpoint once; per category: image-level AUROC + detected anomalies at the learned threshold."""
     config = load_config()
     device = get_device()
 
@@ -69,22 +86,38 @@ def main() -> None:
     index_csv = data_root / "index.csv"
     index_mvtec(data_root, index_csv)
 
+    torch.manual_seed(17)                                          # same train/validation split as train.py
+
     model = build_model(config, device)
     checkpoint = torch.load(checkpoint_path())
     model.bottleneck.load_state_dict(checkpoint["bottleneck"])
     model.decoder.load_state_dict(checkpoint["decoder"])
 
+    threshold = checkpoint.get("threshold")
+    if threshold is None:                                          # checkpoint saved before thresholds existed
+        _, valid_loader, _, _ = build_dataloaders(
+            index_csv, config["img_size"], config["crop_size"],
+            config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
+        )
+        threshold = compute_normal_threshold(model, valid_loader, config["top_pixel_ratio"])
+        print(f"Threshold computed from validation split: {threshold:.4f}")
+
     aurocs = []
     categories = list_categories(index_csv)
     for category_name in categories:
-        _, _, test_loader, test_set = build_dataloaders(
+        _, _, test_loader, _ = build_dataloaders(
             index_csv, config["img_size"], config["crop_size"],
             config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
             category_name=category_name,
         )
-        auroc = evaluate_image_auroc(model, test_loader, config["top_pixel_ratio"])
+        auroc, scores, labels = evaluate_image_auroc(model, test_loader, config["top_pixel_ratio"])
         aurocs.append(auroc)
-        print(f"{category_name}: image-level AUROC {auroc:.3f} ({int(sum(test_set.labels))} anomalies / {len(test_set)} images)")
+        num_anomalies = int(sum(labels))
+        num_detected = sum(1 for score, label in zip(scores, labels) if label == 1 and score >= threshold)
+        print(
+            f"{category_name}: image-level AUROC {auroc:.3f} ({num_anomalies} anomalies / {len(labels)} images), "
+            f"detected {num_detected}/{num_anomalies} at threshold {threshold:.4f}"
+        )
     print(f"Mean image-level AUROC over {len(categories)} categories: {sum(aurocs) / len(aurocs):.3f}")
 
 
