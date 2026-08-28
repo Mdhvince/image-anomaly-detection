@@ -23,8 +23,8 @@ def compute_anomaly_maps(model: torch.nn.Module, images: torch.Tensor, map_size:
     encoder_groups, decoder_groups = model(images)
     group_maps = []
     for encoder_group, decoder_group in zip(encoder_groups, decoder_groups):
-        distance_map = 1 - F.cosine_similarity(encoder_group, decoder_group, dim=-1)  # (B, N)
-        grid_side = int(distance_map.shape[1] ** 0.5)
+        distance_map = 1 - F.cosine_similarity(encoder_group, decoder_group, dim=-1)  # how similar the features are
+        grid_side = int(distance_map.shape[1] ** 0.5)  # N patches per line
         distance_map = distance_map.reshape(-1, 1, grid_side, grid_side)
         distance_map = F.interpolate(distance_map, size=map_size, mode="bilinear", align_corners=True)
         group_maps.append(distance_map)
