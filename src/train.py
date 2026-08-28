@@ -19,21 +19,6 @@ from src.custom_dataset import CustomDataset
 
 
 def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: DataLoader, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, config: dict, save_path: Path) -> None:
-    """Epoch loop: train on normal images, validate on held-out normals, save on validation improvement.
-
-    The mining rate ramps up linearly from 0 to final_mining_percent over
-    mining_ramp_iterations iterations; warmup/cosine schedule and the 0.1 gradient
-    clip follow the paper's iteration count. Losses and the first training
-    batch are logged to TensorBoard (runs/).
-
-    :param model: assembled Dinomaly model.
-    :param train_loader: DataLoader over the normal train split.
-    :param valid_loader: DataLoader over the held-out normal validation split.
-    :param optimizer: AdamW on the trainable modules.
-    :param scheduler: warmup/cosine schedule, stepped each iteration.
-    :param config: configuration dict (get_config).
-    :param save_path: checkpoint file rewritten each time the validation loss decreases.
-    """
     writer = SummaryWriter(log_dir=str(PROJECT_ROOT / "runs"))
     device = next(model.parameters()).device
     num_epochs = math.ceil(config["num_iterations"] / len(train_loader))
