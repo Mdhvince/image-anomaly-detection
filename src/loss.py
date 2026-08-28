@@ -62,13 +62,13 @@ def build_optimizer(model: torch.nn.Module, config: dict) -> tuple:
     """AdamW(amsgrad) + warmup/cosine schedule on the trainable modules (bottleneck + decoder).
 
     :param model: assembled Dinomaly model.
-    :param config: configuration dict (load_config).
+    :param config: configuration dict (get_config).
     :return: (optimizer, scheduler).
     """
     trainable_modules = nn.ModuleList([model.bottleneck, model.decoder])
     optimizer = torch.optim.AdamW(
         params=trainable_modules.parameters(),
-        lr=config["lr"],
+        lr=config["learning_rate"],
         betas=(0.9, 0.999),
         weight_decay=config["weight_decay"],
         amsgrad=True,
@@ -80,7 +80,7 @@ def build_optimizer(model: torch.nn.Module, config: dict) -> tuple:
             compute_lr_ratio,
             warmup_iterations=config["warmup_iterations"],
             num_iterations=config["num_iterations"],
-            final_lr_ratio=config["final_lr"] / config["lr"],
+            final_lr_ratio=config["final_learning_rate"] / config["learning_rate"],
         ),
     )
     return optimizer, scheduler

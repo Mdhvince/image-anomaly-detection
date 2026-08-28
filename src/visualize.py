@@ -12,7 +12,7 @@ from inference import compute_anomaly_maps
 def plot_test_preview(test_set: torch.utils.data.Dataset, denormalize: Callable, title: str) -> plt.Figure:
     """First 2 anomalies (defect tinted) then 2 normal test images.
 
-    :param test_set: MVTecDataset with .labels and .samples attributes.
+    :param test_set: CustomDataset with .labels and .data attributes.
     :param denormalize: inverse of the ImageNet normalization (preprocess.denormalize).
     :param title: figure title (ex: the category name).
     :return: the figure.
@@ -39,7 +39,7 @@ def plot_test_preview(test_set: torch.utils.data.Dataset, denormalize: Callable,
 def plot_preprocessing_check(test_set: torch.utils.data.Dataset, img_size: int, crop_size: int, apply_preprocessing: Callable, denormalize: Callable) -> plt.Figure:
     """One normal and one anomalous test image: raw input vs preprocessed tensor vs mask.
 
-    :param test_set: MVTecDataset with .labels and .samples attributes.
+    :param test_set: CustomDataset with .labels and .data attributes.
     :param img_size: preprocessing resize size.
     :param crop_size: preprocessing crop size.
     :param apply_preprocessing: image pipeline (preprocess.apply_preprocessing).
@@ -51,13 +51,14 @@ def plot_preprocessing_check(test_set: torch.utils.data.Dataset, img_size: int, 
 
     figure, axes = plt.subplots(2, 3, figsize=(12, 6.5))
     for row_index, sample_index in enumerate((normal_index, anomalous_index)):
-        image_path, mask_path, label = test_set.samples[sample_index]
-        raw_image = Image.open(image_path).convert("RGB")
+        row = test_set.data.iloc[sample_index]
+        raw_image = Image.open(row.image_path).convert("RGB")
         image = apply_preprocessing(raw_image, img_size, crop_size)
-        if mask_path is None:
+        if row.mask_path == "":
             mask = torch.zeros(1, crop_size, crop_size)
         else:
-            mask = apply_preprocessing(Image.open(mask_path).convert("L"), img_size, crop_size, is_mask=True)
+            mask = apply_preprocessing(Image.open(row.mask_path).convert("L"), img_size, crop_size, is_mask=True)
+        label = float(row.label)
 
         axes[row_index, 0].imshow(raw_image)
         axes[row_index, 0].set_title(f"image brute (label {label:.0f})", fontsize=9)

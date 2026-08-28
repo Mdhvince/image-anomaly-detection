@@ -8,8 +8,8 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
 
-from config import checkpoint_path, get_device, load_config
-from dataset import build_dataloaders, index_mvtec
+from config import PROJECT_ROOT, checkpoint_path, get_config, get_device
+from dataset_utils import build_dataloaders, index_mvtec
 from inference import compute_normal_threshold
 from loss import build_optimizer, global_cosine_hm
 from model import build_model
@@ -20,7 +20,7 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
     """Epoch loop: train on normal images, validate on held-out normals, save on validation improvement.
 
     The mining rate ramps up linearly from 0 to final_mining_percent over
-    mining_ramp_iters iterations; warmup/cosine schedule and the 0.1 gradient
+    mining_ramp_iterations iterations; warmup/cosine schedule and the 0.1 gradient
     clip follow the paper's iteration count. Losses and the first training
     batch are logged to TensorBoard (runs/).
 
@@ -29,10 +29,10 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
     :param valid_loader: DataLoader over the held-out normal validation split.
     :param optimizer: AdamW on the trainable modules.
     :param scheduler: warmup/cosine schedule, stepped each iteration.
-    :param config: configuration dict (load_config).
+    :param config: configuration dict (get_config).
     :param save_path: checkpoint file rewritten each time the validation loss decreases.
     """
-    writer = SummaryWriter()
+    writer = SummaryWriter(log_dir=str(PROJECT_ROOT / "runs"))
     device = next(model.parameters()).device
     num_epochs = math.ceil(config["num_iterations"] / len(train_loader))
     valid_loss_min = float("inf")
@@ -49,7 +49,7 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
             if iteration == 1:
                 writer.add_image("training/first_batch", make_grid(denormalize(images.cpu()), nrow=4), iteration)
             mining_percent = min(                                   # hard mining rate: 0 -> final_mining_percent
-                config["final_mining_percent"] * iteration / config["mining_ramp_iters"],
+                config["final_mining_percent"] * iteration / config["mining_ramp_iterations"],
                 config["final_mining_percent"],
             )
             optimizer.zero_grad()                                   # Clear the gradients, they accumulate at each step
@@ -93,15 +93,14 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
 
 def main() -> None:
     """Index the dataset, train one model on all categories, checkpoint on validation improvement."""
-    config = load_config()
+    config = get_config()
     device = get_device()
 
     torch.manual_seed(17)                                          # fixed seeds: same validation split at every run
     np.random.seed(17)
 
-    data_root = Path(config["data_root"])
-    index_csv = data_root / "index.csv"
-    num_indexed_images = index_mvtec(data_root, index_csv)
+    index_csv = config["index_csv"]
+    num_indexed_images = index_mvtec(config["data_root"], index_csv)
     print(f"index.csv: {num_indexed_images} images -> {index_csv}")
 
     train_loader, valid_loader, _, _ = build_dataloaders(

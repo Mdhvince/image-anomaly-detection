@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import torch
 from PIL import Image
 
-from config import checkpoint_path, get_device, load_config
+from config import checkpoint_path, get_config, get_device
 from inference import compute_anomaly_maps, image_scores
 from model import build_model
 from preprocess import apply_preprocessing, denormalize
@@ -22,7 +22,7 @@ def predict_anomaly(model: torch.nn.Module, config: dict, image_path: Path) -> t
     """One image file -> (anomaly map, image-level score, preprocessed image for display).
 
     :param model: trained Dinomaly model in eval mode.
-    :param config: configuration dict (load_config).
+    :param config: configuration dict (get_config).
     :param image_path: image file to score.
     :return: (anomaly_map (H, W), score, prepared image tensor (3, H, W)).
     """
@@ -40,7 +40,7 @@ def main() -> None:
         sys.exit(f"usage: python {Path(__file__).name} <image_path>")
     image_path = Path(sys.argv[1])
 
-    config = load_config()
+    config = get_config()
     model = build_model(config, get_device())
     checkpoint = torch.load(checkpoint_path())
     model.bottleneck.load_state_dict(checkpoint["bottleneck"])

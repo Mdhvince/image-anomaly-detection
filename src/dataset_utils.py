@@ -1,19 +1,21 @@
+"""Index CSV creation (the ONLY place that knows the MVTec-AD tree layout) and loader builders."""
 from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-from PIL import Image
 from torch.utils.data import SubsetRandomSampler
+
+from custom_dataset import CustomDataset
 
 
 def index_mvtec(data_root: Path, csv_path: Path) -> int:
     """Walk the MVTec-AD tree (every category, both splits) and write the flat index CSV.
 
-    Expect the official layout - this is the ONLY place that knows it:
-    category/train/good, category/test/good + test/<defect>,
-    category/ground_truth/<defect>/<image name>_mask.png.
+    Expect the official layout: category/train/good, category/test/good + test/<defect>,
+    category/ground_truth/<defect>/<image name>_mask.png. image_path and mask_path are
+    written as ABSOLUTE paths so no path assembly is needed downstream.
 
     :param data_root: MVTec-AD root folder containing one subfolder per category.
     :param csv_path: where the flat index is written (overwritten every run).
@@ -27,49 +29,35 @@ def index_mvtec(data_root: Path, csv_path: Path) -> int:
                 for image_path in sorted(defect_dir.glob("*.png")):
                     mask_path = ""
                     if label == 1.0:
-                        mask_path = str(
-                            (category_dir / "ground_truth" / defect_dir.name / f"{image_path.stem}_mask.png").relative_to(category_dir)
-                        )
+                        mask_path = str(category_dir / "ground_truth" / defect_dir.name / f"{image_path.stem}_mask.png")
                     rows.append({
                         "category": category_dir.name,
                         "split": split,
                         "label": label,
-                        "image_path": str(image_path.relative_to(category_dir)),
+                        "image_path": str(image_path),
                         "mask_path": mask_path,
                     })
     pd.DataFrame.from_records(rows).to_csv(csv_path, index=False)
     return len(rows)
 
 
-class MVTecDataset(torch.utils.data.Dataset):
-    """Dataset from the flat index CSV - Expect one row per image with columns
-    category,split,label,image_path,mask_path (schema in docs/method.md).
+def read_index(index_csv: Path, **read_csv_kwargs: dict) -> pd.DataFrame:
+    """Read the flat index CSV with the project defaults ("" kept for empty mask paths).
+
+    :param index_csv: flat index produced by index_mvtec.
+    :param read_csv_kwargs: extra pandas.read_csv arguments (ex: usecols).
+    :return: the index DataFrame.
     """
+    return pd.read_csv(index_csv, keep_default_na=False, dtype={"label": float}, **read_csv_kwargs)
 
-    def __init__(self, index_rows: list, data_root: Path, img_size: int, crop_size: int, preprocess: Callable) -> None:
-        self.preprocess = preprocess
-        self.img_size, self.crop_size = img_size, crop_size
-        self.samples = [
-            (
-                data_root / row["category"] / row["image_path"],
-                data_root / row["category"] / row["mask_path"] if row["mask_path"] else None,
-                float(row["label"]),
-            )
-            for row in index_rows
-        ]
-        self.labels = [label for _, _, label in self.samples]
 
-    def __len__(self) -> int:
-        return len(self.samples)
+def list_categories(index_csv: Path) -> list:
+    """Sorted MVTec-AD categories of the flat index.
 
-    def __getitem__(self, index: int) -> tuple:
-        image_path, mask_path, label = self.samples[index]
-        image = self.preprocess(Image.open(image_path).convert("RGB"), self.img_size, self.crop_size)
-        if mask_path is None:
-            mask = torch.zeros(1, self.crop_size, self.crop_size)
-        else:
-            mask = self.preprocess(Image.open(mask_path).convert("L"), self.img_size, self.crop_size, is_mask=True)
-        return image, mask, label
+    :param index_csv: flat index produced by index_mvtec.
+    :return: sorted unique category names (ex: ["bottle", "cable", ...]).
+    """
+    return sorted(read_index(index_csv, usecols=["category"])["category"].unique())
 
 
 def train_valid_split(training_set: torch.utils.data.Dataset, valid_ratio: float) -> tuple:
@@ -104,17 +92,11 @@ def build_loaders(train_set: torch.utils.data.Dataset, test_set: torch.utils.dat
     return train_loader, valid_loader, test_loader
 
 
-def list_categories(index_csv: Path) -> list:
-    """Sorted MVTec-AD categories of the flat index.
+def build_dataloaders(index_csv: Path, img_size: int, crop_size: int, batch_size: int, valid_ratio: float, num_workers: int, preprocess: Callable) -> tuple:
+    """Index CSV -> loaders over every category merged (one model for all).
 
-    :param index_csv: flat index produced by index_mvtec.
-    :return: sorted unique category names (ex: ["bottle", "cable", ...]).
-    """
-    return sorted(pd.read_csv(index_csv, usecols=["category"]).category.unique())
-
-
-def build_dataloaders(index_csv: Path, img_size: int, crop_size: int, batch_size: int, valid_ratio: float, num_workers: int, preprocess: Callable, category_name: str = None) -> tuple:
-    """Index CSV -> loaders: every category merged by default (one model for all), restricted to one category if set.
+    Per-category evaluation does not live here: filter read_index rows and build a
+    CustomDataset directly, as inference.py does.
 
     :param index_csv: flat index produced by index_mvtec.
     :param img_size: preprocessing resize size.
@@ -123,16 +105,10 @@ def build_dataloaders(index_csv: Path, img_size: int, crop_size: int, batch_size
     :param valid_ratio: fraction of the normal train images reserved for validation.
     :param num_workers: subprocesses of the train/validation loaders.
     :param preprocess: image pipeline (ex: apply_preprocessing).
-    :param category_name: none (train on all categories) or one MVTec-AD category (per-category evaluation).
     :return: (train_loader, valid_loader, test_loader, test_set).
     """
-    index_frame = pd.read_csv(index_csv, keep_default_na=False, dtype={"label": float})
-    category_rows = index_frame if category_name is None else index_frame[index_frame.category == category_name]
-
-    train_rows = category_rows[category_rows.split == "train"].to_dict("records")
-    test_rows = category_rows[category_rows.split == "test"].to_dict("records")
-
-    train_set = MVTecDataset(train_rows, index_csv.parent, img_size, crop_size, preprocess)
-    test_set = MVTecDataset(test_rows, index_csv.parent, img_size, crop_size, preprocess)
+    index_frame = read_index(index_csv)
+    train_set = CustomDataset(index_frame[index_frame["split"] == "train"], img_size, crop_size, preprocess)
+    test_set = CustomDataset(index_frame[index_frame["split"] == "test"], img_size, crop_size, preprocess)
     train_loader, valid_loader, test_loader = build_loaders(train_set, test_set, batch_size, valid_ratio, num_workers)
     return train_loader, valid_loader, test_loader, test_set

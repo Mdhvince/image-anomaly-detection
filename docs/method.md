@@ -11,19 +11,22 @@ detection d'anomalies. Le jeu de test melange images normales et anormales, avec
 masque de verite terrain pour les anormales.
 
 Le contrat entre les modules n'est pas une arborescence mais un **CSV d'index**,
-`data_root/index.csv` produit par `dataset.py::index_mvtec` - une ligne par image:
+`data_root/index.csv` produit par `src/dataset_utils.py::index_mvtec` - une ligne par image:
 
     category,split,label,image_path,mask_path
 
 1. `category` / `split`: provenance de l'image (ex: `bottle`, `train` ou `test`).
 2. `label`: 0 normal, 1 anomalie (seulement `test` contient des 1).
-3. `image_path`: chemin relatif au dossier de la categorie (le code prefixe avec
-   `data_root / category`).
-4. `mask_path`: masque pixel-level (vide pour les normales).
+3. `image_path`: chemin **absolu**. Aucun assemblage de chemin en aval:
+   `src/custom_dataset.py::CustomDataset` lit les champs directement (pandas).
+4. `mask_path`: chemin **absolu** du masque pixel-level (vide pour les normales).
 
 La seule cellule qui connait l'arborescence officielle (`train/good`, `test/<defaut>`,
 `ground_truth/<defaut>/<nom>_mask.png`) est l'indexeur. Pour brancher un autre
 dataset: produire un CSV dans ce format, rien d'autre ne change.
+
+La configuration est un dictionnaire Python brut (`src/config.py::CONFIG`, surcouche
+`DEMO`), pas un fichier ini a parser. Tout le code vit dans `src/`.
 
 Le preprocessing (`preprocess.py::apply_preprocessing`) est le meme a l'entrainement
 et a l'inference: resize -> crop central -> normalisation ImageNet. Les masques suivent
@@ -148,7 +151,7 @@ d'anomalies detectees** au seuil calcule. Un checkpoint ancien (sans seuil) le f
 recalculer automatiquement depuis le split de validation.
 
 Inference en condition reelle sur une image seule (n'importe quel fichier):
-`python inference_one_image.py <chemin>` -> score image + **decision normale/ANOMALIE**
+`python src/inference_one_image.py <chemin>` -> score image + **decision normale/ANOMALIE**
 + fenetre matplotlib (image | carte superposee).
 
 ## Recapitulatif

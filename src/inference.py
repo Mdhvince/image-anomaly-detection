@@ -1,11 +1,10 @@
-from pathlib import Path
-
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 
-from config import checkpoint_path, get_device, load_config
-from dataset import build_dataloaders, index_mvtec, list_categories
+from config import checkpoint_path, get_config, get_device
+from custom_dataset import CustomDataset
+from dataset_utils import build_dataloaders, index_mvtec, list_categories, read_index
 from model import build_model
 from preprocess import apply_preprocessing
 
@@ -79,12 +78,11 @@ def compute_normal_threshold(model: torch.nn.Module, valid_loader: torch.utils.d
 
 def main() -> None:
     """Load the multi-class checkpoint once; per category: image-level AUROC + detected anomalies at the learned threshold."""
-    config = load_config()
+    config = get_config()
     device = get_device()
 
-    data_root = Path(config["data_root"])
-    index_csv = data_root / "index.csv"
-    index_mvtec(data_root, index_csv)
+    index_csv = config["index_csv"]
+    index_mvtec(config["data_root"], index_csv)
 
     torch.manual_seed(17)                                          # same train/validation split as train.py
 
@@ -103,13 +101,14 @@ def main() -> None:
         print(f"Threshold computed from validation split: {threshold:.4f}")
 
     aurocs = []
+    index_frame = read_index(index_csv)
     categories = list_categories(index_csv)
     for category_name in categories:
-        _, _, test_loader, _ = build_dataloaders(
-            index_csv, config["img_size"], config["crop_size"],
-            config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
-            category_name=category_name,
+        test_set = CustomDataset(
+            index_frame[(index_frame["split"] == "test") & (index_frame["category"] == category_name)],
+            config["img_size"], config["crop_size"], apply_preprocessing,
         )
+        test_loader = torch.utils.data.DataLoader(test_set, batch_size=config["batch_size"], shuffle=False)
         auroc, scores, labels = evaluate_image_auroc(model, test_loader, config["top_pixel_ratio"])
         aurocs.append(auroc)
         num_anomalies = int(sum(labels))

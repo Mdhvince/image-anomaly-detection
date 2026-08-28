@@ -133,7 +133,7 @@ def build_model(config: dict, device: torch.device) -> Dinomaly:
     Only the bottleneck and the decoder are trainable; the encoder is frozen and
     always in eval mode (no dropout on the encoder side).
 
-    :param config: configuration dict (load_config).
+    :param config: configuration dict (get_config).
     :param device: target device.
     :return: the assembled model, ready to train.
     """
