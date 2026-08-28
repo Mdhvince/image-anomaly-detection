@@ -1,4 +1,3 @@
-"""Loose loss: global cosine per group + hard-mining gradient hooks, optimizer and schedule."""
 import math
 from functools import partial
 
@@ -18,24 +17,26 @@ def modify_grad(gradient: torch.Tensor, easy_mask: torch.Tensor, shrink_factor: 
 
 
 def global_cosine_hm(encoder_groups: list, decoder_groups: list, mining_percent: float, shrink_factor: float) -> torch.Tensor:
-    """Global cosine loss per group; hard-mining hooks fire during loss.backward().
+    """
+    Global cosine loss per group; hard-mining hooks fire during loss.backward().
 
     :param encoder_groups: fused encoder features per group.
     :param decoder_groups: fused decoder features per group (gradient-carrying).
-    :param mining_percent: fraction of easy points (lowest per-point cosine
-        distance) whose gradient gets shrunk.
+    :param mining_percent: fraction of easy points (lowest per-point cosine distance) whose gradient gets shrunk.
     :param shrink_factor: multiplier applied on easy points (paper: 0.1).
     :return: mean cosine loss over the groups.
     """
     loss = 0.0
     for encoder_group, decoder_group in zip(encoder_groups, decoder_groups):
         encoder_ref = encoder_group.detach()
+
         with torch.no_grad():
             # per-point cosine distance: over the channels (dim=-1), as in the official code
             point_distances = 1 - nn.functional.cosine_similarity(encoder_ref, decoder_group, dim=-1)  # (B, N)
             num_hard_points = int(point_distances.numel() * (1 - mining_percent))
             distance_threshold = torch.topk(point_distances.flatten(), num_hard_points)[0][-1]
             easy_points_mask = (point_distances < distance_threshold).unsqueeze(-1)  # (B, N, 1), broadcast over the channels
+
         loss = loss + (1 - nn.functional.cosine_similarity(encoder_ref.flatten(1), decoder_group.flatten(1))).mean()
         if torch.is_grad_enabled():                                # the hook only shapes gradients: useless outside a backward
             decoder_group.register_hook(partial(modify_grad, easy_mask=easy_points_mask, shrink_factor=shrink_factor))
