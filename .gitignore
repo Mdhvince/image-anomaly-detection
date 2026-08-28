@@ -1,2 +1,5 @@
 .idea/
 *.pt
+.venv/
+__pycache__/
+runs/

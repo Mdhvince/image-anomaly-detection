@@ -5,20 +5,23 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+from torchvision.utils import make_grid
 
 from config import checkpoint_path, get_device, load_config
-from dataset import build_dataloaders, index_mvtec, list_categories
+from dataset import build_dataloaders, index_mvtec
 from loss import build_optimizer, global_cosine_hm
 from model import build_model
-from preprocess import apply_preprocessing
+from preprocess import apply_preprocessing, denormalize
 
 
-def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: DataLoader, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, config: dict, save_path: Path) -> list:
+def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: DataLoader, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, config: dict, save_path: Path) -> None:
     """Epoch loop: train on normal images, validate on held-out normals, save on validation improvement.
 
     The mining rate ramps up linearly from 0 to final_mining_percent over
     mining_ramp_iters iterations; warmup/cosine schedule and the 0.1 gradient
-    clip follow the paper's iteration count.
+    clip follow the paper's iteration count. Losses and the first training
+    batch are logged to TensorBoard (runs/).
 
     :param model: assembled Dinomaly model.
     :param train_loader: DataLoader over the normal train split.
@@ -27,12 +30,11 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
     :param scheduler: warmup/cosine schedule, stepped each iteration.
     :param config: configuration dict (load_config).
     :param save_path: checkpoint file rewritten each time the validation loss decreases.
-    :return: training loss per epoch.
     """
+    writer = SummaryWriter()
     device = next(model.parameters()).device
     num_epochs = math.ceil(config["num_iterations"] / len(train_loader))
     valid_loss_min = float("inf")
-    train_losses = []
     iteration = 0
 
     for epoch in range(1, num_epochs + 1):
@@ -43,6 +45,8 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
         for images, _, _ in train_loader:
             images = images.to(device)
             iteration += 1
+            if iteration == 1:
+                writer.add_image("training/first_batch", make_grid(denormalize(images.cpu()), nrow=4), iteration)
             mining_percent = min(                                   # hard mining rate: 0 -> final_mining_percent
                 config["final_mining_percent"] * iteration / config["mining_ramp_iters"],
                 config["final_mining_percent"],
@@ -64,6 +68,7 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
             optimizer.step()                                        # Perform updates using calculated gradients
             scheduler.step()
             train_loss += loss.item() * images.size(0)
+        train_loss = train_loss / len(train_loader.sampler)
 
         model.eval()
         with torch.no_grad():
@@ -72,10 +77,10 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
                 encoder_groups, decoder_groups = model(images)
                 loss = global_cosine_hm(encoder_groups, decoder_groups, 0.0, config["shrink_factor"])
                 valid_loss += loss.item() * images.size(0)
+        valid_loss = valid_loss / len(valid_loader.sampler)
 
-        train_loss = train_loss / len(train_loader)
-        valid_loss = valid_loss / len(valid_loader)
-        train_losses.append(train_loss)
+        writer.add_scalar("Loss/training", train_loss, epoch)
+        writer.add_scalar("Loss/validation", valid_loss, epoch)
         print(f"Epoch: {epoch} \tTraining Loss: {train_loss:.4f} \tValidation Loss: {valid_loss:.4f}")
 
         if valid_loss <= valid_loss_min:
@@ -83,11 +88,11 @@ def train_dinomaly(model: nn.Module, train_loader: DataLoader, valid_loader: Dat
             torch.save({"bottleneck": model.bottleneck.state_dict(), "decoder": model.decoder.state_dict()}, save_path)
             valid_loss_min = valid_loss
 
-    return train_losses
+    writer.close()
 
 
 def main() -> None:
-    """Index the dataset, then train one model per category, checkpoint on validation improvement."""
+    """Index the dataset, train one model on all categories, checkpoint on validation improvement."""
     config = load_config()
     device = get_device()
 
@@ -99,34 +104,28 @@ def main() -> None:
     num_indexed_images = index_mvtec(data_root, index_csv)
     print(f"index.csv: {num_indexed_images} images -> {index_csv}")
 
-    categories = list_categories(index_csv)
-    print(f"{len(categories)} categories: {', '.join(categories)}")
-    for position, category_name in enumerate(categories, start=1):
-        print(f"=== {category_name} ({position}/{len(categories)}) ===")
-        train_loader, valid_loader, _, test_set = build_dataloaders(
-            index_csv, category_name, config["img_size"], config["crop_size"],
-            config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
-        )
-        print(
-            f"{len(train_loader.sampler)} train images (normal only), "
-            f"{len(valid_loader.sampler)} held out for validation, {len(test_set)} test images"
-        )
+    train_loader, valid_loader, _, _ = build_dataloaders(
+        index_csv, config["img_size"], config["crop_size"],
+        config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
+    )
+    print(
+        f"{len(train_loader.sampler)} train images (normal only, all categories), "
+        f"{len(valid_loader.sampler)} held out for validation"
+    )
 
-        model = build_model(config, device)
-        if position == 1:
-            num_frozen_parameters = sum(parameter.numel() for parameter in model.encoder.parameters())
-            num_trainable_parameters = sum(
-                parameter.numel() for module in (model.bottleneck, model.decoder) for parameter in module.parameters()
-            )
-            print(
-                f"{config['backbone']} frozen ({num_frozen_parameters / 1e6:.0f}M parameters), "
-                f"{num_trainable_parameters / 1e6:.1f}M trainable"
-            )
+    model = build_model(config, device)
+    num_frozen_parameters = sum(parameter.numel() for parameter in model.encoder.parameters())
+    num_trainable_parameters = sum(
+        parameter.numel() for module in (model.bottleneck, model.decoder) for parameter in module.parameters()
+    )
+    print(
+        f"{config['backbone']} frozen ({num_frozen_parameters / 1e6:.0f}M parameters), "
+        f"{num_trainable_parameters / 1e6:.1f}M trainable"
+    )
 
-        optimizer, scheduler = build_optimizer(model, config)
-        save_path = checkpoint_path(category_name)
-        train_losses = train_dinomaly(model, train_loader, valid_loader, optimizer, scheduler, config, save_path)
-        print(f"Checkpoint: {save_path} \tFinal training loss: {train_losses[-1]:.4f}")
+    optimizer, scheduler = build_optimizer(model, config)
+    train_dinomaly(model, train_loader, valid_loader, optimizer, scheduler, config, checkpoint_path())
+    print("Losses and first batch in TensorBoard: tensorboard --logdir runs")
 
 
 if __name__ == "__main__":

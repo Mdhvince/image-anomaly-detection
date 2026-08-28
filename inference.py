@@ -69,18 +69,19 @@ def main() -> None:
     index_csv = data_root / "index.csv"
     index_mvtec(data_root, index_csv)
 
+    model = build_model(config, device)
+    checkpoint = torch.load(checkpoint_path())
+    model.bottleneck.load_state_dict(checkpoint["bottleneck"])
+    model.decoder.load_state_dict(checkpoint["decoder"])
+
     aurocs = []
     categories = list_categories(index_csv)
     for category_name in categories:
         _, _, test_loader, test_set = build_dataloaders(
-            index_csv, category_name, config["img_size"], config["crop_size"],
+            index_csv, config["img_size"], config["crop_size"],
             config["batch_size"], config["valid_ratio"], config["num_workers"], apply_preprocessing,
+            category_name=category_name,
         )
-        model = build_model(config, device)
-        checkpoint = torch.load(checkpoint_path(category_name))
-        model.bottleneck.load_state_dict(checkpoint["bottleneck"])
-        model.decoder.load_state_dict(checkpoint["decoder"])
-
         auroc = evaluate_image_auroc(model, test_loader, config["top_pixel_ratio"])
         aurocs.append(auroc)
         print(f"{category_name}: image-level AUROC {auroc:.3f} ({int(sum(test_set.labels))} anomalies / {len(test_set)} images)")

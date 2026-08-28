@@ -77,20 +77,6 @@ def plot_preprocessing_check(test_set: torch.utils.data.Dataset, img_size: int, 
     return figure
 
 
-def plot_loss_curve(loss_history: list) -> plt.Figure:
-    """Global cosine loss per iteration.
-
-    :param loss_history: per-iteration loss returned by train_dinomaly.
-    :return: the figure.
-    """
-    figure, axis = plt.subplots(figsize=(7, 2.8))
-    axis.plot(loss_history)
-    axis.set_xlabel("iteration")
-    axis.set_ylabel("global cosine loss")
-    axis.set_title(f"Loss d'entraînement (finale: {loss_history[-1]:.4f})", fontsize=10)
-    return figure
-
-
 def plot_anomaly_maps(model: torch.nn.Module, loader: torch.utils.data.DataLoader, denormalize: Callable, max_rows: int = 6) -> plt.Figure:
     """First batch: image / ground-truth mask / anomaly map side by side.
 

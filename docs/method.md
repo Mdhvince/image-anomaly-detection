@@ -1,6 +1,8 @@
 # La methode pas a pas
 
 Pourquoi chaque brique existe. Les renvois de code pointent vers les modules du depot.
+Voir aussi: [concepts.md](concepts.md) (prerequis en bullet points) -
+[metrics.md](metrics.md) (AUROC image vs pixel).
 
 ## 01 - Donnees: MVTec-AD
 
@@ -8,9 +10,18 @@ L'entrainement ne voit que des images **normales**: c'est le "unsupervised" de l
 detection d'anomalies. Le jeu de test melange images normales et anormales, avec un
 masque de verite terrain pour les anormales.
 
-Le contrat entre les modules n'est pas une arborescence mais un **CSV d'index**
-(schema dans le README, produit par `dataset.py::index_mvtec`). La seule cellule qui
-connait l'arborescence officielle (`train/good`, `test/<defaut>`,
+Le contrat entre les modules n'est pas une arborescence mais un **CSV d'index**,
+`data_root/index.csv` produit par `dataset.py::index_mvtec` - une ligne par image:
+
+    category,split,label,image_path,mask_path
+
+1. `category` / `split`: provenance de l'image (ex: `bottle`, `train` ou `test`).
+2. `label`: 0 normal, 1 anomalie (seulement `test` contient des 1).
+3. `image_path`: chemin relatif au dossier de la categorie (le code prefixe avec
+   `data_root / category`).
+4. `mask_path`: masque pixel-level (vide pour les normales).
+
+La seule cellule qui connait l'arborescence officielle (`train/good`, `test/<defaut>`,
 `ground_truth/<defaut>/<nom>_mask.png`) est l'indexeur. Pour brancher un autre
 dataset: produire un CSV dans ce format, rien d'autre ne change.
 
@@ -74,30 +85,52 @@ l'encoder - donc reconstruit aussi les anomalies. Dinomaly desserre la contraint
 
 ## 06 - Loose loss: cosinus global + hard mining
 
-Deux mecanismes distincts:
+Deux mecanismes distincts (`loss.py::global_cosine_hm`):
 
 1. **Valeur de la loss**: distance cosinus **globale** entre groupe encoder et groupe
-   decoder (maps aplaties, une valeur par image et par groupe).
-2. **Gradients (le vrai hard mining)**: pour chaque point de la carte, si sa distance
-   cosinus est sous le quantile `p` du batch (point deja bien reconstruit), son gradient
-   est **multiplie par 0.1** via un hook sur la sortie du decoder. Seuls les 10% de
+   decoder (maps aplaties, une valeur par image et par groupe), moyennee sur les 2
+   groupes et sur le batch.
+2. **Gradients (le vrai hard mining)**: la distance cosinus est aussi calculee **par
+   point**; les `mining_percent`% de points les **plus faciles** (distance la plus
+   basse, deja bien reconstruits) voient leur gradient **multiplie par
+   `shrink_factor`** (0.1) via un hook `Tensor.register_hook` pose sur la sortie du
+   decoder, qui se declenche dans `loss.backward()`. A convergence, seuls les 10% de
    points les plus difficiles gardent un gradient plein - et ce sont eux qui comptent.
 
-Le taux de mining `p` **monte lineairement** de 0 a 0.9: la loss commence comme un
-simple cosinus global, puis se concentre (detail du code officiel, absent du papier).
+Vocabulaire de la config:
+
+- **mining / hard example mining**: ignorer (presque) les points deja bien reconstruits
+  pour concentrer l'apprentissage sur les plus difficiles.
+- **`final_mining_percent = 0.9`**: a convergence, 90% des points sont consideres
+  "faciles" (gradient x0.1); la loss est faite par le 10% le plus dur.
+- **`mining_ramp_iters = 1000`**: le taux de mining monte **lineairement** de 0 a
+  `final_mining_percent` sur les 1000 premieres iterations: la loss commence comme un
+  simple cosinus global, puis se concentre (detail du code officiel, absent du papier).
+  Miner trop tot serait absurde: au debut tout est difficile, rien n'est "facile".
+- **`shrink_factor = 0.1`**: multiplicateur du gradient sur les points faciles (le
+  sg(.)_shrink du papier). Pas 0: on attenue, on ne tue pas le gradient.
 
 Optimiseur: le papier utilise StableAdamW (lr 2e-3, wd 1e-4, AMSGrad); on prend
 l'alternative standard `torch.optim.AdamW(amsgrad=True)` + warmup/cosine + clip 0.1.
 
 ## 07 - Training
 
+Mode **multi-class** (le coeur du papier): **un seul modele pour toutes les
+categories**, entraine sur toutes les images normales fusionnees. C'est le dropout du
+bottleneck (section 03) qui rend ce partage possible: un decodeur qui ne peut pas
+copier l'identite se voit interdire de "reconnaitre" la categorie.
+
 Boucle par epochs (`train.py::train_dinomaly`): phase train sur les images normales
 (forward -> loss avec hooks de mining -> clip de gradient 0.1 -> step -> scheduler),
 puis phase validation sur un split d'images normales mis de cote (`valid_ratio`, sans
 backward). Le checkpoint est **re-sauvegarde a chaque fois que la loss de validation
-diminue** - jamais en fin d'entrainement. Le hard mining monte lineairement de 0 a
-`final_mining_percent` sur `mining_ramp_iters` iterations. Seuls les poids du
-bottleneck et du decoder sont sauvegardes dans `checkpoints/<categorie>.pt`.
+diminue** - jamais en fin d'entrainement. Seuls les poids du bottleneck et du decoder
+sont sauvegardes dans `checkpoints/dinomaly.pt`.
+
+Suivi dans **TensorBoard**: losses train/validation par epoch (scalars) et la grille
+du **1er batch d'entrainement** (denormalise, pour verifier le preprocessing):
+
+    tensorboard --logdir runs
 
 ## 08 - Inference: carte d'anomalie et score image
 
@@ -105,7 +138,9 @@ La **carte d'anomalie** = distance cosinus **par point** entre groupes encoder e
 decoder, moyennee sur les 2 groupes, puis upsamplee a la taille de l'image.
 Le **score image** = moyenne du top 1% des valeurs de la carte (plus robuste que le max).
 Une seule passe forward donne les trois taches: segmentation (la carte), detection
-(score vs seuil), classification (anormal ou non).
+(score vs seuil), classification (anormal ou non). Evaluation (`inference.py`): le
+checkpoint unique est recharge une fois, puis l'I-AUROC est calculee **par categorie**
++ en **moyenne** sur toutes (le protocole multi-class du papier).
 
 ## Recapitulatif
 
@@ -116,6 +151,7 @@ Une seule passe forward donne les trois taches: segmentation (la carte), detecti
 | Decoder | 8 blocs, Linear Attention (elu+1) | idem |
 | Contrainte | 2 groupes bas/haut niveau, croises | idem |
 | Loss | cosinus global + hard mining x0.1, p: 0 -> 0.9 | idem |
+| Training | un modele unique, toutes categories (multi-class) | idem |
 | Score image | moyenne du top 1% de la carte | idem |
 
 Regimen DEMO assume: 224px (au lieu de 392), 300 iterations (au lieu de 10 000),

@@ -89,12 +89,11 @@ def load_config(config_path: Path | None = None) -> dict:
     return config
 
 
-def checkpoint_path(category: str) -> Path:
-    """Checkpoint file of a category (bottleneck + decoder weights), parent created.
+def checkpoint_path() -> Path:
+    """Checkpoint file of the single multi-class model (bottleneck + decoder weights), parent created.
 
-    :param category: MVTec-AD category name (ex: hazelnut).
     :return: path of the checkpoint file.
     """
-    path = Path("checkpoints") / f"{category}.pt"
+    path = Path("checkpoints") / "dinomaly.pt"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
