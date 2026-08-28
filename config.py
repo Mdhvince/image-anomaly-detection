@@ -9,27 +9,28 @@ CONFIG_ENV_VAR = "DINOMALITY_CONFIG"
 
 
 def get_device() -> torch.device:
-    """Apple Silicon GPU (MPS) when available, CPU otherwise.
-
-    :return: the device every run uses.
-    """
-    return torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = (
+        "cuda" if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available()
+        else "cpu"
+    )
+    return torch.device(device)
 
 
 def parse_integer_list(raw_value: str) -> list:
-    """Parse a comma-separated ini value into a list of ints.
-
-    :param raw_value: ex: "2,3,4,5".
-    :return: ex: [2, 3, 4, 5].
+    """
+    Parse a comma-separated ini value into a list of ints.
+    :param raw_value: "2,3,4,5".
+    :return: [2, 3, 4, 5].
     """
     return [int(token) for token in raw_value.split(",")]
 
 
 def parse_group_list(raw_value: str) -> list:
-    """Parse a semicolon-separated list of comma-separated integer lists.
-
-    :param raw_value: ex: "0,1,2,3;4,5,6,7".
-    :return: ex: [[0, 1, 2, 3], [4, 5, 6, 7]].
+    """
+    Parse a semicolon-separated list of comma-separated integer lists.
+    :param raw_value: "0,1,2,3;4,5,6,7".
+    :return: [[0, 1, 2, 3], [4, 5, 6, 7]].
     """
     return [parse_integer_list(group) for group in raw_value.split(";")]
 
