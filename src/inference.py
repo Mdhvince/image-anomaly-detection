@@ -1,8 +1,8 @@
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
 from sklearn.metrics import roc_auc_score
+from torch.utils.data import DataLoader
 
 from config import checkpoint_path, get_config, get_device
 from custom_dataset import CustomDataset
