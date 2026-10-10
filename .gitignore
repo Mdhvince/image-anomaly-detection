@@ -4,4 +4,4 @@
 __pycache__/
 runs/
 .DS_Store
-checkpoints
+checkpoints/*
